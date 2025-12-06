@@ -1553,7 +1553,7 @@
       reader.readAsText(file);
     }
 
-    async function importCsv() {
+async function importCsv() {
   if (!csvData || csvData.length === 0 || isProcessing) return;
   
   // 二重クリック防止
@@ -1570,13 +1570,13 @@
       return {
         date: row['日付'] || row['date'] || new Date().toISOString().split('T')[0],
         article_title: (row['記事名'] || row['タイトル'] || row['title'] || '').trim(),
-        pv: parseInt(row['PV'] || row['ビュー'] || row['pv'] || 0),
-        likes: parseInt(row['スキ'] || row['いいね'] || row['likes'] || 0),
-        comments: parseInt(row['コメント'] || row['comments'] || 0)
+        pv: parseInt(row['PV'] || row['ビュー'] || row['pv'] || 0) || 0,
+        likes: parseInt(row['スキ'] || row['いいね'] || row['likes'] || 0) || 0,
+        comments: parseInt(row['コメント'] || row['comments'] || 0) || 0
       };
     });
     
-    // 記事タイトルごとにグループ化して処理
+    // 記事タイトルごとにグループ化
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
     const articleIdMap = {};
     
@@ -1586,7 +1586,6 @@
       .select('id, title, status')
       .in('title', uniqueTitles);
     
-    // 既存記事のマップを作成
     (existingArticles || []).forEach(a => {
       articleIdMap[a.title] = a.id;
     });
@@ -1632,40 +1631,33 @@
       }
     }
     
-    // 記事ごとにデータを日付順にソート
-    const dataByArticle = {};
+    // 記事ごと・日付ごとにデータを整理（同じ記事・日付は最新値で上書き）
+    const dataByArticleDate = {};
     analyticsData.forEach(d => {
       if (!d.article_title || !articleIdMap[d.article_title]) return;
       const articleId = articleIdMap[d.article_title];
-      if (!dataByArticle[articleId]) {
-        dataByArticle[articleId] = [];
-      }
-      dataByArticle[articleId].push(d);
+      const key = `${articleId}_${d.date}`;
+      dataByArticleDate[key] = {
+        articleId,
+        date: d.date,
+        pv: d.pv,
+        likes: d.likes,
+        comments: d.comments
+      };
     });
     
-    // 各記事のデータを日付順にソート
+    // 記事ごとにグループ化
+    const dataByArticle = {};
+    Object.values(dataByArticleDate).forEach(d => {
+      if (!dataByArticle[d.articleId]) {
+        dataByArticle[d.articleId] = [];
+      }
+      dataByArticle[d.articleId].push(d);
+    });
+    
+    // 各記事のデータを日付昇順にソート
     Object.keys(dataByArticle).forEach(articleId => {
       dataByArticle[articleId].sort((a, b) => new Date(a.date) - new Date(b.date));
-    });
-    
-    // 既存のアナリティクスデータを取得（累計値を計算するため）
-    const articleIds = Object.keys(dataByArticle);
-    const { data: existingAnalytics } = await supabase
-      .from('article_analytics')
-      .select('article_id, date, pv, likes, comments')
-      .in('article_id', articleIds)
-      .order('date', { ascending: true });
-    
-    // 記事ごとの最新累計値を計算
-    const latestTotals = {};
-    (existingAnalytics || []).forEach(a => {
-      if (!latestTotals[a.article_id]) {
-        latestTotals[a.article_id] = { pv: 0, likes: 0, comments: 0, lastDate: null };
-      }
-      latestTotals[a.article_id].pv += a.pv;
-      latestTotals[a.article_id].likes += a.likes;
-      latestTotals[a.article_id].comments += a.comments;
-      latestTotals[a.article_id].lastDate = a.date;
     });
     
     // 増分を計算してupsert用データを作成
@@ -1673,63 +1665,33 @@
     
     Object.keys(dataByArticle).forEach(articleId => {
       const records = dataByArticle[articleId];
-      let prevTotals = latestTotals[articleId] || { pv: 0, likes: 0, comments: 0 };
       
-      // CSVの値は累計値なので、前回との差分を計算
-      let prevCsvPv = 0;
-      let prevCsvLikes = 0;
-      let prevCsvComments = 0;
-      
-      // 最初のレコードの場合、既存の累計値を考慮
-      if (records.length > 0) {
-        // 既存データがある場合、CSVの最初の値から既存累計を引いて増分を計算
-        const firstRecord = records[0];
+      for (let i = 0; i < records.length; i++) {
+        const current = records[i];
         
-        // 既存の累計値を取得
-        const existingTotal = latestTotals[articleId];
-        if (existingTotal && existingTotal.lastDate) {
-          // 既存データがある場合、CSVの値は累計なので
-          // 前回のCSV累計値として既存累計を使用
-          prevCsvPv = existingTotal.pv;
-          prevCsvLikes = existingTotal.likes;
-          prevCsvComments = existingTotal.comments;
-        }
-      }
-      
-      records.forEach((record, index) => {
-        // CSVの値（累計値）
-        const csvPv = record.pv;
-        const csvLikes = record.likes;
-        const csvComments = record.comments;
-        
-        // 増分を計算（累計値 - 前回の累計値）
         let deltaPv, deltaLikes, deltaComments;
         
-        if (index === 0 && !latestTotals[articleId]) {
-          // 新規記事の最初のレコード：CSVの値をそのまま使用
-          deltaPv = csvPv;
-          deltaLikes = csvLikes;
-          deltaComments = csvComments;
+        if (i === 0) {
+          // 最初のレコード：そのままの値を使用
+          deltaPv = current.pv;
+          deltaLikes = current.likes;
+          deltaComments = current.comments;
         } else {
-          // 増分を計算
-          deltaPv = Math.max(0, csvPv - prevCsvPv);
-          deltaLikes = Math.max(0, csvLikes - prevCsvLikes);
-          deltaComments = Math.max(0, csvComments - prevCsvComments);
+          // 2番目以降：前のレコードとの差分
+          const prev = records[i - 1];
+          deltaPv = Math.max(0, current.pv - prev.pv);
+          deltaLikes = Math.max(0, current.likes - prev.likes);
+          deltaComments = Math.max(0, current.comments - prev.comments);
         }
-        
-        // 次のレコード用に現在のCSV値を保存
-        prevCsvPv = csvPv;
-        prevCsvLikes = csvLikes;
-        prevCsvComments = csvComments;
         
         analyticsToUpsert.push({
           article_id: articleId,
-          date: record.date,
+          date: current.date,
           pv: deltaPv,
           likes: deltaLikes,
           comments: deltaComments
         });
-      });
+      }
     });
     
     if (analyticsToUpsert.length > 0) {
