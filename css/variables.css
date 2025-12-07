@@ -1,0 +1,18 @@
+:root {
+  --primary: #2cb696;
+  --primary-dark: #239b7e;
+  --primary-light: #e8f5f1;
+  --danger: #e74c3c;
+  --warning: #f39c12;
+  --success: #27ae60;
+  --gray-100: #f8f9fa;
+  --gray-200: #e9ecef;
+  --gray-300: #dee2e6;
+  --gray-400: #ced4da;
+  --gray-500: #adb5bd;
+  --gray-600: #6c757d;
+  --gray-700: #495057;
+  --gray-800: #343a40;
+  --shadow: 0 2px 8px rgba(0,0,0,0.1);
+  --radius: 12px;
+}
