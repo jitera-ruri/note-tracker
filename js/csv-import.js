@@ -89,7 +89,6 @@ function parseCSVLine(line) {
   return result;
 }
 
-// タイムアウト付きクエリ（タイムアウト時間を延長）
 async function queryWithTimeout(queryPromise, timeoutMs = 30000) {
   return Promise.race([
     queryPromise,
@@ -99,7 +98,6 @@ async function queryWithTimeout(queryPromise, timeoutMs = 30000) {
   ]);
 }
 
-// リトライ機能付きクエリ
 async function queryWithRetry(queryFn, maxRetries = 3, retryDelay = 1000) {
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -113,7 +111,7 @@ async function queryWithRetry(queryFn, maxRetries = 3, retryDelay = 1000) {
       if (i < maxRetries - 1) {
         console.log(`${retryDelay}ms後にリトライします...`);
         await new Promise(resolve => setTimeout(resolve, retryDelay));
-        retryDelay *= 2; // 指数バックオフ
+        retryDelay *= 2;
       } else {
         throw error;
       }
@@ -131,7 +129,6 @@ async function processCsvFile(file) {
       let text = e.target.result;
       console.log('ファイル読み込み完了:', text.length, '文字');
       
-      // BOMを削除
       if (text.charCodeAt(0) === 0xFEFF) {
         text = text.substring(1);
       }
@@ -170,7 +167,6 @@ async function processCsvFile(file) {
       
       csvData = data;
       
-      // プレビュー表示
       const preview = document.getElementById('csv-preview');
       const content = document.getElementById('csv-preview-content');
       
@@ -185,7 +181,6 @@ async function processCsvFile(file) {
         `;
       }
       
-      // 記事タイトルを抽出
       const csvTitles = [...new Set(data.map(row => {
         const title = row['タイトル'] || row['記事名'] || row['title'] || '';
         return title.trim();
@@ -198,7 +193,6 @@ async function processCsvFile(file) {
         return;
       }
       
-      // 下書き記事を確認（リトライ付き）
       console.log('下書き記事確認開始...');
       
       try {
@@ -221,7 +215,6 @@ async function processCsvFile(file) {
       } catch (error) {
         console.error('下書き記事確認失敗:', error);
         csvDraftArticles = [];
-        console.log('下書き記事チェックをスキップして続行');
       }
       
       const updateStatusGroup = document.getElementById('update-status-group');
@@ -237,7 +230,6 @@ async function processCsvFile(file) {
         }
       }
       
-      // インポートボタンを有効化
       const importBtn = document.getElementById('import-csv-btn');
       if (importBtn) {
         console.log('=== ボタン有効化 ===');
@@ -313,7 +305,7 @@ async function importCsv() {
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
     const articleIdMap = {};
     
-    // 既存の記事を取得（リトライ付き）
+    // 既存の記事を取得
     console.log('既存記事取得開始...');
     const existingResult = await queryWithRetry(() =>
       supabase
@@ -420,84 +412,151 @@ async function importCsv() {
     
     console.log('整理後の記事数:', Object.keys(dataByArticle).length);
     
-    // 【最適化】前日までの累積値を一括取得
-    console.log('前日累積値計算開始...');
+    // 【最適化】データベース関数を使用して前日累積値を取得
+    console.log('前日累積値計算開始（データベース関数使用）...');
     const articleIds = Object.keys(dataByArticle);
     
-    // 全記事の前日データを一括取得
-    const prevResult = await queryWithRetry(() =>
-      supabase
-        .from('article_analytics')
-        .select('article_id, pv, likes, comments')
-        .in('article_id', articleIds)
-        .lt('date', importDate)
+    const cumulativeResult = await queryWithRetry(() =>
+      supabase.rpc('get_cumulative_before_date', {
+        p_article_ids: articleIds,
+        p_date: importDate
+      })
     );
     
-    if (prevResult.error) {
-      throw prevResult.error;
-    }
-    
-    console.log('前日データ取得完了:', prevResult.data?.length || 0, '件');
-    
-    // 記事ごとに累積値を計算
-    const previousCumulativeByArticle = {};
-    
-    articleIds.forEach(articleId => {
-      previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
-    });
-    
-    (prevResult.data || []).forEach(item => {
-      const articleId = item.article_id;
-      if (!previousCumulativeByArticle[articleId]) {
-        previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
-      }
-      previousCumulativeByArticle[articleId].pv += item.pv || 0;
-      previousCumulativeByArticle[articleId].likes += item.likes || 0;
-      previousCumulativeByArticle[articleId].comments += item.comments || 0;
-    });
-    
-    console.log('累積値計算完了');
-    
-    // 増分を計算
-    const analyticsToUpsert = [];
-    
-    Object.keys(dataByArticle).forEach(articleId => {
-      const current = dataByArticle[articleId];
-      const previous = previousCumulativeByArticle[articleId] || { pv: 0, likes: 0, comments: 0 };
+    if (cumulativeResult.error) {
+      console.error('データベース関数エラー:', cumulativeResult.error);
+      console.log('フォールバック: 通常のクエリを使用します');
       
-      const deltaPv = Math.max(0, current.pv - previous.pv);
-      const deltaLikes = Math.max(0, current.likes - previous.likes);
-      const deltaComments = Math.max(0, current.comments - previous.comments);
-      
-      analyticsToUpsert.push({
-        article_id: articleId,
-        date: importDate,
-        pv: deltaPv,
-        likes: deltaLikes,
-        comments: deltaComments
-      });
-    });
-    
-    console.log('インポートデータ:', analyticsToUpsert.length, '件');
-    
-    // データベースに保存
-    if (analyticsToUpsert.length > 0) {
-      console.log('データベース保存開始...');
-      
-      const upsertResult = await queryWithRetry(() =>
+      // フォールバック: 通常のクエリ
+      const prevResult = await queryWithRetry(() =>
         supabase
           .from('article_analytics')
-          .upsert(analyticsToUpsert, { onConflict: 'article_id,date' })
+          .select('article_id, pv, likes, comments')
+          .in('article_id', articleIds)
+          .lt('date', importDate)
       );
       
-      if (upsertResult.error) {
-        throw upsertResult.error;
+      if (prevResult.error) {
+        throw prevResult.error;
       }
       
-      console.log('データベース保存完了');
+      const previousCumulativeByArticle = {};
+      articleIds.forEach(articleId => {
+        previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
+      });
+      
+      (prevResult.data || []).forEach(item => {
+        const articleId = item.article_id;
+        if (!previousCumulativeByArticle[articleId]) {
+          previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
+        }
+        previousCumulativeByArticle[articleId].pv += item.pv || 0;
+        previousCumulativeByArticle[articleId].likes += item.likes || 0;
+        previousCumulativeByArticle[articleId].comments += item.comments || 0;
+      });
+      
+      console.log('累積値計算完了（フォールバック）');
+      
+      // 増分を計算
+      const analyticsToUpsert = [];
+      
+      Object.keys(dataByArticle).forEach(articleId => {
+        const current = dataByArticle[articleId];
+        const previous = previousCumulativeByArticle[articleId] || { pv: 0, likes: 0, comments: 0 };
+        
+        const deltaPv = Math.max(0, current.pv - previous.pv);
+        const deltaLikes = Math.max(0, current.likes - previous.likes);
+        const deltaComments = Math.max(0, current.comments - previous.comments);
+        
+        analyticsToUpsert.push({
+          article_id: articleId,
+          date: importDate,
+          pv: deltaPv,
+          likes: deltaLikes,
+          comments: deltaComments
+        });
+      });
+      
+      console.log('インポートデータ:', analyticsToUpsert.length, '件');
+      
+      // データベースに保存
+      if (analyticsToUpsert.length > 0) {
+        console.log('データベース保存開始...');
+        
+        const upsertResult = await queryWithRetry(() =>
+          supabase
+            .from('article_analytics')
+            .upsert(analyticsToUpsert, { onConflict: 'article_id,date' })
+        );
+        
+        if (upsertResult.error) {
+          throw upsertResult.error;
+        }
+        
+        console.log('データベース保存完了');
+      }
+      
+    } else {
+      // データベース関数が成功した場合
+      console.log('累積値取得完了（データベース関数）:', cumulativeResult.data?.length || 0, '件');
+      
+      // 結果をマップに変換
+      const previousCumulativeByArticle = {};
+      articleIds.forEach(articleId => {
+        previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
+      });
+      
+      (cumulativeResult.data || []).forEach(item => {
+        previousCumulativeByArticle[item.article_id] = {
+          pv: item.total_pv || 0,
+          likes: item.total_likes || 0,
+          comments: item.total_comments || 0
+        };
+      });
+      
+      console.log('累積値計算完了');
+      
+      // 増分を計算
+      const analyticsToUpsert = [];
+      
+      Object.keys(dataByArticle).forEach(articleId => {
+        const current = dataByArticle[articleId];
+        const previous = previousCumulativeByArticle[articleId] || { pv: 0, likes: 0, comments: 0 };
+        
+        const deltaPv = Math.max(0, current.pv - previous.pv);
+        const deltaLikes = Math.max(0, current.likes - previous.likes);
+        const deltaComments = Math.max(0, current.comments - previous.comments);
+        
+        analyticsToUpsert.push({
+          article_id: articleId,
+          date: importDate,
+          pv: deltaPv,
+          likes: deltaLikes,
+          comments: deltaComments
+        });
+      });
+      
+      console.log('インポートデータ:', analyticsToUpsert.length, '件');
+      
+      // データベースに保存
+      if (analyticsToUpsert.length > 0) {
+        console.log('データベース保存開始...');
+        
+        const upsertResult = await queryWithRetry(() =>
+          supabase
+            .from('article_analytics')
+            .upsert(analyticsToUpsert, { onConflict: 'article_id,date' })
+        );
+        
+        if (upsertResult.error) {
+          throw upsertResult.error;
+        }
+        
+        console.log('データベース保存完了');
+      }
     }
     
-    const message = `${analyticsToUpsert.length}件のデータを${importDate}にインポートしました`;
+    const message = `${Object.keys(dataByArticle).length}件のデータを${importDate}にインポートしました`;
     console.log('=== インポート成功 ===');
     showToast(message);
     
