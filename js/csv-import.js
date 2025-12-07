@@ -27,66 +27,150 @@ function handleCsvFile(event) {
   }
 }
 
+// CSV行を解析する関数（ダブルクォート対応）
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+    
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        // エスケープされたダブルクォート
+        current += '"';
+        i++;
+      } else {
+        // クォートの開始/終了
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      // フィールドの区切り
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  // 最後のフィールド
+  result.push(current.trim());
+  
+  return result;
+}
+
 async function processCsvFile(file) {
   const reader = new FileReader();
   reader.onload = async (e) => {
-    const text = e.target.result;
-    const lines = text.split('\n').filter(line => line.trim());
-    
-    if (lines.length < 2) {
-      showToast('CSVファイルが空です');
-      return;
+    try {
+      let text = e.target.result;
+      
+      // BOMを削除
+      if (text.charCodeAt(0) === 0xFEFF) {
+        text = text.substring(1);
+      }
+      
+      // 改行コードを統一（Windows/Mac/Linux対応）
+      const normalizedText = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+      
+      // 空行を除外
+      const lines = normalizedText.split('\n').filter(line => line.trim());
+      
+      if (lines.length < 2) {
+        showToast('CSVファイルが空です');
+        return;
+      }
+      
+      console.log('=== CSV解析開始 ===');
+      console.log('総行数:', lines.length);
+      console.log('ヘッダー行:', lines[0]);
+      
+      // ヘッダーを解析
+      const headers = parseCSVLine(lines[0]);
+      console.log('解析されたヘッダー:', headers);
+      
+      const data = [];
+      
+      // データ行を解析
+      for (let i = 1; i < lines.length; i++) {
+        const values = parseCSVLine(lines[i]);
+        
+        if (values.length === 0 || values.every(v => !v.trim())) {
+          console.log(`行 ${i + 1}: 空行をスキップ`);
+          continue;
+        }
+        
+        const row = {};
+        headers.forEach((h, idx) => {
+          row[h] = values[idx] || '';
+        });
+        
+        data.push(row);
+      }
+      
+      if (data.length === 0) {
+        showToast('有効なデータがありません');
+        return;
+      }
+      
+      console.log('解析完了:', data.length, '件');
+      console.log('サンプルデータ:', data[0]);
+      csvData = data;
+      
+      const preview = document.getElementById('csv-preview');
+      const content = document.getElementById('csv-preview-content');
+      preview.style.display = 'block';
+      content.innerHTML = `
+        <p><strong>${data.length}件のデータ</strong></p>
+        <p>カラム: ${headers.join(', ')}</p>
+        <hr style="margin: 8px 0;">
+        ${data.slice(0, 3).map(row => `<pre style="font-size: 0.75rem;">${JSON.stringify(row, null, 2)}</pre>`).join('')}
+        ${data.length > 3 ? '<p>...</p>' : ''}
+      `;
+      
+      // 記事タイトルを抽出（複数のカラム名に対応）
+      const csvTitles = [...new Set(data.map(row => {
+        const title = row['タイトル'] || row['記事名'] || row['title'] || 
+                     row['記事タイトル'] || row['Title'] || row['Article'] || '';
+        return title.trim();
+      }).filter(t => t))];
+      
+      console.log('抽出された記事タイトル:', csvTitles);
+      
+      if (csvTitles.length === 0) {
+        showToast('記事名が見つかりません。CSVのカラム名を確認してください。');
+        return;
+      }
+      
+      const { data: draftArticles } = await supabase
+        .from('articles')
+        .select('id, title')
+        .eq('status', 'draft')
+        .in('title', csvTitles);
+      
+      csvDraftArticles = draftArticles || [];
+      
+      const updateStatusGroup = document.getElementById('update-status-group');
+      if (csvDraftArticles.length > 0) {
+        updateStatusGroup.style.display = 'flex';
+        updateStatusGroup.querySelector('label').textContent = 
+          `下書き記事（${csvDraftArticles.length}件）を「投稿済み」に更新する`;
+      } else {
+        updateStatusGroup.style.display = 'none';
+      }
+      
+      document.getElementById('import-csv-btn').disabled = false;
+      
+    } catch (error) {
+      console.error('CSV解析エラー:', error);
+      showToast('CSVファイルの解析に失敗しました');
     }
-    
-    const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-    const data = [];
-    
-    for (let i = 1; i < lines.length; i++) {
-      const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-      const row = {};
-      headers.forEach((h, idx) => {
-        row[h] = values[idx] || '';
-      });
-      data.push(row);
-    }
-    
-    csvData = data;
-    
-    const preview = document.getElementById('csv-preview');
-    const content = document.getElementById('csv-preview-content');
-    preview.style.display = 'block';
-    content.innerHTML = `
-      <p><strong>${data.length}件のデータ</strong></p>
-      <p>カラム: ${headers.join(', ')}</p>
-      <hr style="margin: 8px 0;">
-      ${data.slice(0, 3).map(row => `<p>${JSON.stringify(row)}</p>`).join('')}
-      ${data.length > 3 ? '<p>...</p>' : ''}
-    `;
-    
-    const csvTitles = [...new Set(data.map(row => 
-      (row['記事名'] || row['タイトル'] || row['title'] || '').trim()
-    ).filter(t => t))];
-    
-    const { data: draftArticles } = await supabase
-      .from('articles')
-      .select('id, title')
-      .eq('status', 'draft')
-      .in('title', csvTitles);
-    
-    csvDraftArticles = draftArticles || [];
-    
-    const updateStatusGroup = document.getElementById('update-status-group');
-    if (csvDraftArticles.length > 0) {
-      updateStatusGroup.style.display = 'flex';
-      updateStatusGroup.querySelector('label').textContent = 
-        `下書き記事（${csvDraftArticles.length}件）を「投稿済み」に更新する`;
-    } else {
-      updateStatusGroup.style.display = 'none';
-    }
-    
-    document.getElementById('import-csv-btn').disabled = false;
   };
-  reader.readAsText(file);
+  
+  // UTF-8として読み込み
+  reader.readAsText(file, 'UTF-8');
 }
 
 async function importCsv() {
@@ -103,18 +187,48 @@ async function importCsv() {
     
     if (!importDate) {
       showToast('日付を選択してください');
+      isProcessing = false;
+      importBtn.disabled = false;
+      importBtn.textContent = 'インポート';
       return;
     }
     
+    console.log(`インポート開始: ${importDate}`);
+    
     // CSVデータを解析（累積値として取得）
+    // カラム名のマッピング
     const analyticsData = csvData.map(row => {
+      // タイトルの取得
+      const title = row['タイトル'] || row['記事名'] || row['title'] || 
+                   row['記事タイトル'] || row['Title'] || '';
+      
+      // PVの取得
+      const pv = parseInt(
+        row['ビュー'] || row['PV'] || row['pv'] || 
+        row['ビュー数'] || row['Views'] || row['views'] || 0
+      ) || 0;
+      
+      // スキの取得
+      const likes = parseInt(
+        row['スキ'] || row['いいね'] || row['likes'] || 
+        row['Likes'] || row['Like'] || 0
+      ) || 0;
+      
+      // コメントの取得
+      const comments = parseInt(
+        row['コメント'] || row['comments'] || 
+        row['Comments'] || row['Comment'] || 0
+      ) || 0;
+      
       return {
-        article_title: (row['記事名'] || row['タイトル'] || row['title'] || '').trim(),
-        pv: parseInt(row['PV'] || row['ビュー'] || row['pv'] || 0) || 0,
-        likes: parseInt(row['スキ'] || row['いいね'] || row['likes'] || 0) || 0,
-        comments: parseInt(row['コメント'] || row['comments'] || 0) || 0
+        article_title: title.trim(),
+        pv: pv,
+        likes: likes,
+        comments: comments
       };
     });
+    
+    console.log('CSVデータ（最初の3件）:', analyticsData.slice(0, 3));
     
     // 記事タイトルごとにグループ化
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
@@ -178,62 +292,42 @@ async function importCsv() {
       const articleId = articleIdMap[d.article_title];
       dataByArticle[articleId] = {
         articleId,
+        title: d.article_title,
         pv: d.pv,
         likes: d.likes,
         comments: d.comments
       };
     });
     
-    // 各記事について、指定日付の前日までの累積値を取得
+    console.log('記事別データ（最初の3件）:', Object.values(dataByArticle).slice(0, 3));
+    
+    // 各記事について、指定日付より前の全データを取得して累積値を計算
     const articleIds = Object.keys(dataByArticle);
-    
-    // 指定日付の前日を計算
-    const targetDate = new Date(importDate);
-    const previousDate = new Date(targetDate);
-    previousDate.setDate(previousDate.getDate() - 1);
-    const previousDateStr = previousDate.toISOString().split('T')[0];
-    
-    // 各記事の指定日付以前の最新データを取得
     const previousCumulativeByArticle = {};
     
     for (const articleId of articleIds) {
+      // 指定日付より前のすべてのデータを取得
       const { data: previousData } = await supabase
         .from('article_analytics')
-        .select('*')
+        .select('pv, likes, comments, date')
         .eq('article_id', articleId)
-        .lte('date', previousDateStr)
-        .order('date', { ascending: false })
-        .limit(1);
+        .lt('date', importDate)
+        .order('date', { ascending: true });
       
-      if (previousData && previousData.length > 0) {
-        // 既存データから累積値を再計算
-        const { data: allPreviousData } = await supabase
-          .from('article_analytics')
-          .select('pv, likes, comments')
-          .eq('article_id', articleId)
-          .lte('date', previousDateStr);
-        
-        const cumulative = {
-          pv: 0,
-          likes: 0,
-          comments: 0
-        };
-        
-        (allPreviousData || []).forEach(item => {
-          cumulative.pv += item.pv || 0;
-          cumulative.likes += item.likes || 0;
-          cumulative.comments += item.comments || 0;
-        });
-        
-        previousCumulativeByArticle[articleId] = cumulative;
-      } else {
-        // 前日データがない場合は0
-        previousCumulativeByArticle[articleId] = {
-          pv: 0,
-          likes: 0,
-          comments: 0
-        };
-      }
+      // 増分を合計して累積値を計算
+      const cumulative = {
+        pv: 0,
+        likes: 0,
+        comments: 0
+      };
+      
+      (previousData || []).forEach(item => {
+        cumulative.pv += item.pv || 0;
+        cumulative.likes += item.likes || 0;
+        cumulative.comments += item.comments || 0;
+      });
+      
+      previousCumulativeByArticle[articleId] = cumulative;
     }
     
     // 増分を計算してupsert用データを作成
@@ -241,12 +335,17 @@ async function importCsv() {
     
     Object.keys(dataByArticle).forEach(articleId => {
       const current = dataByArticle[articleId];
-      const previous = previousCumulativeByArticle[articleId];
+      const previous = previousCumulativeByArticle[articleId] || { pv: 0, likes: 0, comments: 0 };
       
       // CSVの累積値から前日までの累積値を引いて増分を計算
       const deltaPv = Math.max(0, current.pv - previous.pv);
       const deltaLikes = Math.max(0, current.likes - previous.likes);
       const deltaComments = Math.max(0, current.comments - previous.comments);
+      
+      console.log(`記事: ${current.title}`);
+      console.log(`  CSV累積: PV=${current.pv}, スキ=${current.likes}, コメント=${current.comments}`);
+      console.log(`  前日累積: PV=${previous.pv}, スキ=${previous.likes}, コメント=${previous.comments}`);
+      console.log(`  増分: PV=${deltaPv}, スキ=${deltaLikes}, コメント=${deltaComments}`);
       
       analyticsToUpsert.push({
         article_id: articleId,
@@ -257,8 +356,17 @@ async function importCsv() {
       });
     });
     
+    console.log('インポートするデータ件数:', analyticsToUpsert.length);
+    
     if (analyticsToUpsert.length > 0) {
-      await upsertArticleAnalytics(analyticsToUpsert);
+      const { error } = await supabase
+        .from('article_analytics')
+        .upsert(analyticsToUpsert, { onConflict: 'article_id,date' });
+      
+      if (error) {
+        console.error('Upsertエラー:', error);
+        throw error;
+      }
     }
     
     let message = `${analyticsToUpsert.length}件のデータを${importDate}にインポートしました`;
@@ -272,7 +380,7 @@ async function importCsv() {
     loadAnalytics();
   } catch (error) {
     console.error('Error importing CSV:', error);
-    showToast('インポートに失敗しました');
+    showToast(`インポートに失敗しました: ${error.message}`);
   } finally {
     isProcessing = false;
     importBtn.disabled = false;
