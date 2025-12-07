@@ -89,14 +89,36 @@ function parseCSVLine(line) {
   return result;
 }
 
-// Supabaseクエリをタイムアウト付きで実行
-async function queryWithTimeout(queryPromise, timeoutMs = 10000) {
+// タイムアウト付きクエリ（タイムアウト時間を延長）
+async function queryWithTimeout(queryPromise, timeoutMs = 30000) {
   return Promise.race([
     queryPromise,
     new Promise((_, reject) => 
       setTimeout(() => reject(new Error('クエリがタイムアウトしました')), timeoutMs)
     )
   ]);
+}
+
+// リトライ機能付きクエリ
+async function queryWithRetry(queryFn, maxRetries = 3, retryDelay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      console.log(`クエリ実行 (試行 ${i + 1}/${maxRetries})`);
+      const result = await queryWithTimeout(queryFn(), 30000);
+      console.log('クエリ成功');
+      return result;
+    } catch (error) {
+      console.error(`クエリ失敗 (試行 ${i + 1}/${maxRetries}):`, error.message);
+      
+      if (i < maxRetries - 1) {
+        console.log(`${retryDelay}ms後にリトライします...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        retryDelay *= 2; // 指数バックオフ
+      } else {
+        throw error;
+      }
+    }
+  }
 }
 
 async function processCsvFile(file) {
@@ -176,37 +198,30 @@ async function processCsvFile(file) {
         return;
       }
       
-      // 下書き記事を確認（タイムアウト対応）
-      console.log('Supabaseクエリ開始...');
-      console.log('クエリ対象:', csvTitles.length, '件');
+      // 下書き記事を確認（リトライ付き）
+      console.log('下書き記事確認開始...');
       
       try {
-        // タイムアウトを10秒に設定
-        const queryPromise = supabase
-          .from('articles')
-          .select('id, title')
-          .eq('status', 'draft')
-          .in('title', csvTitles);
-        
-        const result = await queryWithTimeout(queryPromise, 10000);
-        
-        console.log('Supabaseクエリ完了');
-        console.log('結果:', result);
+        const result = await queryWithRetry(() => 
+          supabase
+            .from('articles')
+            .select('id, title')
+            .eq('status', 'draft')
+            .in('title', csvTitles)
+        );
         
         if (result.error) {
           console.error('Supabaseエラー:', result.error);
-          // エラーがあっても続行（下書き記事がないものとして扱う）
           csvDraftArticles = [];
         } else {
           csvDraftArticles = result.data || [];
           console.log('下書き記事数:', csvDraftArticles.length);
         }
         
-      } catch (timeoutError) {
-        console.error('クエリタイムアウト:', timeoutError);
-        // タイムアウトしても続行（下書き記事がないものとして扱う）
+      } catch (error) {
+        console.error('下書き記事確認失敗:', error);
         csvDraftArticles = [];
-        console.log('タイムアウトのため下書き記事チェックをスキップ');
+        console.log('下書き記事チェックをスキップして続行');
       }
       
       const updateStatusGroup = document.getElementById('update-status-group');
@@ -227,7 +242,6 @@ async function processCsvFile(file) {
       if (importBtn) {
         console.log('=== ボタン有効化 ===');
         importBtn.disabled = false;
-        console.log('ボタンが有効になりました');
       }
       
       console.log('=== processCsvFile 完了 ===');
@@ -299,21 +313,18 @@ async function importCsv() {
     const uniqueTitles = [...new Set(analyticsData.map(d => d.article_title).filter(t => t))];
     const articleIdMap = {};
     
-    // 既存の記事を取得（タイムアウト対応）
+    // 既存の記事を取得（リトライ付き）
     console.log('既存記事取得開始...');
-    const existingQuery = supabase
-      .from('articles')
-      .select('id, title, status')
-      .in('title', uniqueTitles);
-    
-    const existingResult = await queryWithTimeout(existingQuery, 10000);
+    const existingResult = await queryWithRetry(() =>
+      supabase
+        .from('articles')
+        .select('id, title, status')
+        .in('title', uniqueTitles)
+    );
     
     if (existingResult.error) {
-      console.error('既存記事取得エラー:', existingResult.error);
       throw existingResult.error;
     }
-    
-    console.log('既存記事取得完了');
     
     (existingResult.data || []).forEach(a => {
       articleIdMap[a.title] = a.id;
@@ -326,18 +337,17 @@ async function importCsv() {
       console.log('下書き記事更新開始...');
       const draftIds = csvDraftArticles.map(a => a.id);
       
-      const updateQuery = supabase
-        .from('articles')
-        .update({ 
-          status: 'published',
-          published_at: new Date().toISOString()
-        })
-        .in('id', draftIds);
-      
-      const updateResult = await queryWithTimeout(updateQuery, 10000);
+      const updateResult = await queryWithRetry(() =>
+        supabase
+          .from('articles')
+          .update({ 
+            status: 'published',
+            published_at: new Date().toISOString()
+          })
+          .in('id', draftIds)
+      );
       
       if (updateResult.error) {
-        console.error('下書き更新エラー:', updateResult.error);
         throw updateResult.error;
       }
       
@@ -349,15 +359,14 @@ async function importCsv() {
     if (newTitles.length > 0) {
       console.log('新規記事作成開始:', newTitles.length, '件');
       
-      const insertQuery = supabase
-        .from('articles')
-        .insert(newTitles.map(title => ({ title, status: 'published' })))
-        .select();
-      
-      const insertResult = await queryWithTimeout(insertQuery, 10000);
+      const insertResult = await queryWithRetry(() =>
+        supabase
+          .from('articles')
+          .insert(newTitles.map(title => ({ title, status: 'published' })))
+          .select()
+      );
       
       if (insertResult.error) {
-        console.error('新規記事作成エラー:', insertResult.error);
         throw insertResult.error;
       }
       
@@ -383,11 +392,11 @@ async function importCsv() {
       if (tasksToInsert.length > 0) {
         console.log('タスク作成開始:', tasksToInsert.length, '件');
         
-        const taskQuery = supabase.from('tasks').insert(tasksToInsert);
-        const taskResult = await queryWithTimeout(taskQuery, 10000);
+        const taskResult = await queryWithRetry(() =>
+          supabase.from('tasks').insert(tasksToInsert)
+        );
         
         if (taskResult.error) {
-          console.error('タスク作成エラー:', taskResult.error);
           throw taskResult.error;
         }
         
@@ -411,41 +420,41 @@ async function importCsv() {
     
     console.log('整理後の記事数:', Object.keys(dataByArticle).length);
     
-    // 前日までの累積値を計算
+    // 【最適化】前日までの累積値を一括取得
     console.log('前日累積値計算開始...');
     const articleIds = Object.keys(dataByArticle);
+    
+    // 全記事の前日データを一括取得
+    const prevResult = await queryWithRetry(() =>
+      supabase
+        .from('article_analytics')
+        .select('article_id, pv, likes, comments')
+        .in('article_id', articleIds)
+        .lt('date', importDate)
+    );
+    
+    if (prevResult.error) {
+      throw prevResult.error;
+    }
+    
+    console.log('前日データ取得完了:', prevResult.data?.length || 0, '件');
+    
+    // 記事ごとに累積値を計算
     const previousCumulativeByArticle = {};
     
-    // 記事ごとに順次処理（並列処理を避ける）
-    for (const articleId of articleIds) {
-      console.log(`記事ID ${articleId} の前日データ取得中...`);
-      
-      const prevQuery = supabase
-        .from('article_analytics')
-        .select('pv, likes, comments')
-        .eq('article_id', articleId)
-        .lt('date', importDate);
-      
-      const prevResult = await queryWithTimeout(prevQuery, 10000);
-      
-      if (prevResult.error) {
-        console.error('前日データ取得エラー:', prevResult.error);
-        throw prevResult.error;
+    articleIds.forEach(articleId => {
+      previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
+    });
+    
+    (prevResult.data || []).forEach(item => {
+      const articleId = item.article_id;
+      if (!previousCumulativeByArticle[articleId]) {
+        previousCumulativeByArticle[articleId] = { pv: 0, likes: 0, comments: 0 };
       }
-      
-      const cumulative = { pv: 0, likes: 0, comments: 0 };
-      
-      (prevResult.data || []).forEach(item => {
-        cumulative.pv += item.pv || 0;
-        cumulative.likes += item.likes || 0;
-        cumulative.comments += item.comments || 0;
-      });
-      
-      previousCumulativeByArticle[articleId] = cumulative;
-      
-      // 各クエリの間に少し待機（レート制限対策）
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+      previousCumulativeByArticle[articleId].pv += item.pv || 0;
+      previousCumulativeByArticle[articleId].likes += item.likes || 0;
+      previousCumulativeByArticle[articleId].comments += item.comments || 0;
+    });
     
     console.log('累積値計算完了');
     
@@ -475,14 +484,13 @@ async function importCsv() {
     if (analyticsToUpsert.length > 0) {
       console.log('データベース保存開始...');
       
-      const upsertQuery = supabase
-        .from('article_analytics')
-        .upsert(analyticsToUpsert, { onConflict: 'article_id,date' });
-      
-      const upsertResult = await queryWithTimeout(upsertQuery, 15000);
+      const upsertResult = await queryWithRetry(() =>
+        supabase
+          .from('article_analytics')
+          .upsert(analyticsToUpsert, { onConflict: 'article_id,date' })
+      );
       
       if (upsertResult.error) {
-        console.error('Upsertエラー:', upsertResult.error);
         throw upsertResult.error;
       }
       
