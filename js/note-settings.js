@@ -6,7 +6,6 @@
 class NoteSettingsManager {
   constructor() {
     this.storageKey = 'note_api_settings';
-    this.loadSettings();
   }
 
   /**
@@ -16,14 +15,7 @@ class NoteSettingsManager {
     try {
       const saved = localStorage.getItem(this.storageKey);
       if (saved) {
-        const settings = JSON.parse(saved);
-        
-        // APIクライアントに認証情報を設定
-        if (settings.authToken && settings.sessionToken) {
-          window.noteAPIClient.setAuth(settings.authToken, settings.sessionToken);
-        }
-        
-        return settings;
+        return JSON.parse(saved);
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -43,10 +35,6 @@ class NoteSettingsManager {
       };
 
       localStorage.setItem(this.storageKey, JSON.stringify(settings));
-      
-      // APIクライアントに認証情報を設定
-      window.noteAPIClient.setAuth(authToken, sessionToken);
-      
       return true;
     } catch (error) {
       console.error('Failed to save settings:', error);
@@ -59,7 +47,6 @@ class NoteSettingsManager {
    */
   clearSettings() {
     localStorage.removeItem(this.storageKey);
-    window.noteAPIClient.setAuth(null, null);
   }
 
   /**
@@ -117,6 +104,10 @@ function openNoteSettingsModal() {
         </div>
 
         <div style="padding: 12px; background: #e3f2fd; border-radius: 8px; margin-top: 16px;">
+          <strong>💡 ヒント:</strong> 保存後、「noteから自動取得」ボタンで動作確認してください
+        </div>
+
+        <div style="padding: 12px; background: #fff3cd; border-radius: 8px; margin-top: 12px;">
           <strong>⚠️ 注意:</strong> Cookie情報は定期的に更新が必要です（通常30日程度）
         </div>
 
@@ -129,7 +120,6 @@ function openNoteSettingsModal() {
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="closeNoteSettingsModal()">キャンセル</button>
         <button class="btn btn-danger" onclick="clearNoteSettings()">設定をクリア</button>
-        <button class="btn btn-secondary" onclick="testNoteConnection()">接続テスト</button>
         <button class="btn btn-primary" onclick="saveNoteSettings()">保存</button>
       </div>
     </div>
@@ -164,10 +154,10 @@ async function saveNoteSettings() {
   const success = window.noteSettingsManager.saveSettings(authToken, sessionToken);
   
   if (success) {
-    showToast('設定を保存しました');
+    showToast('✅ 設定を保存しました');
     closeNoteSettingsModal();
   } else {
-    showToast('設定の保存に失敗しました');
+    showToast('❌ 設定の保存に失敗しました');
   }
 }
 
@@ -179,32 +169,6 @@ function clearNoteSettings() {
     window.noteSettingsManager.clearSettings();
     showToast('設定をクリアしました');
     closeNoteSettingsModal();
-  }
-}
-
-/**
- * note接続テスト
- */
-async function testNoteConnection() {
-  const authToken = document.getElementById('note-auth-token').value.trim();
-  const sessionToken = document.getElementById('note-session-token').value.trim();
-
-  if (!authToken || !sessionToken) {
-    showToast('両方のCookie情報を入力してください');
-    return;
-  }
-
-  // 一時的に認証情報を設定
-  window.noteAPIClient.setAuth(authToken, sessionToken);
-
-  showToast('接続テスト中...');
-
-  const result = await window.noteAPIClient.testConnection();
-  
-  if (result.success) {
-    showToast('✅ 接続成功！note APIと通信できます');
-  } else {
-    showToast(`❌ 接続失敗: ${result.message}`);
   }
 }
 
