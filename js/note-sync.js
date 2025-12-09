@@ -9,6 +9,9 @@ class NoteSyncManager {
     this.loadLastSyncTime();
   }
 
+  /**
+   * 最終同期時刻を読み込み
+   */
   loadLastSyncTime() {
     const saved = localStorage.getItem('note_last_sync_time');
     if (saved) {
@@ -16,12 +19,18 @@ class NoteSyncManager {
     }
   }
 
+  /**
+   * 最終同期時刻を保存
+   */
   saveLastSyncTime() {
     this.lastSyncTime = new Date();
     localStorage.setItem('note_last_sync_time', this.lastSyncTime.toISOString());
     this.updateSyncStatusUI();
   }
 
+  /**
+   * 同期ステータスUIを更新
+   */
   updateSyncStatusUI() {
     const statusElement = document.getElementById('last-sync-time');
     if (statusElement && this.lastSyncTime) {
@@ -46,7 +55,7 @@ class NoteSyncManager {
       const settings = window.noteSettingsManager.loadSettings();
       
       if (!settings.authToken || !settings.sessionToken) {
-        throw new Error('note API認証情報が設定されていません');
+        throw new Error('note API認証情報が設定されていません。⚙️ note連携設定から設定してください。');
       }
 
       // Vercel API Routeを呼び出し
@@ -60,6 +69,11 @@ class NoteSyncManager {
           sessionToken: settings.sessionToken
         })
       });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API Error: ${response.status}`);
+      }
 
       const result = await response.json();
 
@@ -88,7 +102,7 @@ class NoteSyncManager {
 // グローバルインスタンス
 window.noteSyncManager = new NoteSyncManager();
 
-// グローバル関数
+// グローバル関数（HTMLから呼び出し用）
 async function syncFromNote() {
   await window.noteSyncManager.syncFromNote();
 }
