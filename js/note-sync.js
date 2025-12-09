@@ -1,6 +1,5 @@
 /**
- * note同期処理
- * note APIからデータを取得してSupabaseに保存
+ * note同期処理（Vercel API Route版）
  */
 
 class NoteSyncManager {
@@ -40,7 +39,7 @@ class NoteSyncManager {
   }
 
   /**
-   * noteからデータを同期
+   * noteからデータを同期（Vercel API経由）
    */
   async syncFromNote() {
     if (this.isSyncing) {
@@ -52,23 +51,37 @@ class NoteSyncManager {
       this.isSyncing = true;
       showToast('noteからデータを取得中...');
 
-      // 認証チェック
-      if (!window.noteAPIClient.isAuthenticated) {
-        throw new Error('note API認証情報が設定されていません');
-      }
-
-      // 全記事のデータを取得
-      const allStats = await window.noteAPIClient.getAllStats('all', 10);
+      // Cookie情報を取得
+      const settings = window.noteSettingsManager.loadSettings();
       
-      if (!allStats || allStats.length === 0) {
-        throw new Error('データが取得できませんでした');
+      if (!settings.authToken || !settings.sessionToken) {
+        throw new Error('note API認証情報が設定されていません。⚙️ note連携設定から設定してください。');
       }
 
-      showToast(`${allStats.length}件の記事データを取得しました`);
+      // Vercel API Routeを呼び出し
+      const response = await fetch('/api/sync-note', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          authToken: settings.authToken,
+          sessionToken: settings.sessionToken
+        })
+      });
 
-      // データを整形してSupabaseに保存
-      await this.saveStatsToDatabase(allStats);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API Error: ${response.status}`);
+      }
 
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || '同期に失敗しました');
+      }
+
+      showToast(`${result.count}件のデータを保存しました`);
       this.saveLastSyncTime();
       showToast('同期が完了しました');
 
@@ -83,113 +96,6 @@ class NoteSyncManager {
     } finally {
       this.isSyncing = false;
     }
-  }
-
-  /**
-   * 統計データをデータベースに保存
-   */
-  async saveStatsToDatabase(statsArray) {
-    const today = new Date().toISOString().split('T')[0];
-    const records = [];
-
-    for (const stat of statsArray) {
-      // 記事情報を抽出
-      const articleId = stat.id || stat.key;
-      const title = stat.name || stat.title || '無題';
-      const url = stat.noteUrl || `https://note.com/${stat.userUrlname}/n/${stat.key}`;
-      
-      // 統計情報を抽出
-      const pv = stat.readCount || stat.pv || 0;
-      const likes = stat.likeCount || stat.likes || 0;
-      const comments = stat.commentCount || stat.comments || 0;
-
-      // 記事マスタに登録（存在しない場合）
-      await this.upsertArticle(articleId, title, url);
-
-      // 統計データを登録
-      records.push({
-        article_id: articleId,
-        date: today,
-        pv: pv,
-        likes: likes,
-        comments: comments
-      });
-    }
-
-    // バッチで保存
-    if (records.length > 0) {
-      await this.batchUpsertAnalytics(records);
-    }
-  }
-
-  /**
-   * 記事マスタに登録
-   */
-  async upsertArticle(articleId, title, url) {
-    try {
-      const { error } = await supabase
-        .from('articles')
-        .upsert({
-          id: articleId,
-          title: title,
-          url: url,
-          status: 'published',
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'id'
-        });
-
-      if (error) throw error;
-    } catch (error) {
-      console.error('Article upsert error:', error);
-      // 記事マスタの登録エラーは致命的ではないので続行
-    }
-  }
-
-  /**
-   * 分析データをバッチで登録
-   */
-  async batchUpsertAnalytics(records) {
-    try {
-      // 既存データを削除（同じ日付のデータ）
-      const dates = [...new Set(records.map(r => r.date))];
-      for (const date of dates) {
-        await supabase
-          .from('article_analytics')
-          .delete()
-          .eq('date', date);
-      }
-
-      // 新しいデータを挿入
-      const { error } = await supabase
-        .from('article_analytics')
-        .insert(records);
-
-      if (error) throw error;
-
-      showToast(`${records.length}件のデータを保存しました`);
-    } catch (error) {
-      console.error('Batch upsert error:', error);
-      throw new Error('データベースへの保存に失敗しました');
-    }
-  }
-
-  /**
-   * 自動同期を設定
-   */
-  setupAutoSync(intervalHours = 24) {
-    // 既存のタイマーをクリア
-    if (this.autoSyncTimer) {
-      clearInterval(this.autoSyncTimer);
-    }
-
-    // 新しいタイマーを設定
-    const intervalMs = intervalHours * 60 * 60 * 1000;
-    this.autoSyncTimer = setInterval(() => {
-      this.syncFromNote();
-    }, intervalMs);
-
-    console.log(`Auto sync enabled: every ${intervalHours} hours`);
   }
 }
 
