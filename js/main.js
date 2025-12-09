@@ -1,5 +1,4 @@
-// Supabase初期化
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+// Supabase初期化は api.js で行われているので削除
 
 // ページ読み込み時の初期化
 document.addEventListener('DOMContentLoaded', async () => {
