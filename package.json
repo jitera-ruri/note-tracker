@@ -1,0 +1,17 @@
+{
+  "name": "note-writing-tool",
+  "version": "1.0.0",
+  "description": "note執筆管理ツール",
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required'",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "vercel": "^33.0.0"
+  }
+}
