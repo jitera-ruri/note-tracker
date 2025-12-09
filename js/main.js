@@ -1,20 +1,64 @@
-// メイン初期化スクリプト
+// Supabase初期化
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-document.addEventListener('DOMContentLoaded', () => {
+// ページ読み込み時の初期化
+document.addEventListener('DOMContentLoaded', async () => {
+  const currentTab = getCurrentTab();
+  
+  if (currentTab === 'progress') {
+    await loadArticles();
+  } else if (currentTab === 'analytics') {
+    // loadAnalyticsが定義されているか確認
+    if (typeof loadAnalytics === 'function') {
+      await loadAnalytics();
+    } else {
+      console.warn('loadAnalytics is not defined yet');
+    }
+  }
+  
   initTabs();
-  initFilterTabs();
-  initTagsInput();
-  initFileDrop();
-  initGanttControls();
-  loadArticles();
-  loadAnalytics();
-  
-  // 日付のデフォルト値
-  document.getElementById('stats-date').value = new Date().toISOString().split('T')[0];
-  
-  // 期間比較のデフォルト値
-  const now = new Date();
-  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  document.getElementById('period1').value = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`;
-  document.getElementById('period2').value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 });
+
+// タブ切り替え
+function initTabs() {
+  const tabs = document.querySelectorAll('.tab');
+  
+  tabs.forEach(tab => {
+    tab.addEventListener('click', async function() {
+      const targetTab = this.getAttribute('data-tab');
+      
+      // アクティブ状態を切り替え
+      tabs.forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      
+      // コンテンツを切り替え
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.remove('active');
+      });
+      
+      const targetContent = document.getElementById(`${targetTab}-tab`);
+      if (targetContent) {
+        targetContent.classList.add('active');
+      }
+      
+      // タブに応じてデータを読み込み
+      if (targetTab === 'progress') {
+        await loadArticles();
+      } else if (targetTab === 'analytics') {
+        // loadAnalyticsが定義されているか確認
+        if (typeof loadAnalytics === 'function') {
+          await loadAnalytics();
+        }
+      }
+      
+      // URLを更新
+      history.pushState(null, '', `?tab=${targetTab}`);
+    });
+  });
+}
+
+// 現在のタブを取得
+function getCurrentTab() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('tab') || 'progress';
+}
