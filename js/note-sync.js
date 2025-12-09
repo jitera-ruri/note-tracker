@@ -81,9 +81,10 @@ class NoteSyncManager {
         throw new Error(result.error || '同期に失敗しました');
       }
 
-      showToast(`${result.count}件のデータを保存しました`);
+      const now = new Date().toLocaleString('ja-JP');
+      showToast(`${result.count}件のデータを保存しました（取得時刻: ${now}）`);
       this.saveLastSyncTime();
-      showToast('同期が完了しました');
+      showToast('✅ 同期が完了しました。※noteのデータは数時間の遅延があります');
 
       // グラフを更新
       if (typeof loadAnalytics === 'function') {
