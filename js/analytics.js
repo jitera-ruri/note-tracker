@@ -357,3 +357,18 @@ async function saveStats() {
     saveBtn.textContent = '保存';
   }
 }
+// 既存のコードの最後に追加
+
+/**
+ * 同期ステータスの初期化
+ */
+function initSyncStatus() {
+  if (window.noteSyncManager) {
+    window.noteSyncManager.updateSyncStatusUI();
+  }
+}
+
+// ページ読み込み時に同期ステータスを表示
+document.addEventListener('DOMContentLoaded', () => {
+  initSyncStatus();
+});
