@@ -4,13 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>note アクセス解析ツール</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <!-- CSS -->
   <link rel="stylesheet" href="css/variables.css">
   <link rel="stylesheet" href="css/layout.css">
   <link rel="stylesheet" href="css/components.css">
   <link rel="stylesheet" href="css/modal.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <!-- JavaScript（順序重要） -->
+  <script src="js/config.js"></script>
+  <script src="js/utils.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/note-settings.js"></script>
+  <script src="js/note-sync.js"></script>
+  <script src="js/analytics.js"></script>
+  <script src="js/csv-export.js"></script>
+  <script src="js/main.js" defer></script>
 </head>
 <body>
   <!-- Header -->
@@ -53,7 +66,7 @@
         <button class="btn btn-primary" id="sync-note-btn" onclick="syncFromNote()">
           🔄 noteから自動取得
         </button>
-        <button class="btn btn-secondary" onclick="openNoteSettings()">
+        <button class="btn btn-secondary" onclick="openNoteSettingsModal()">
           ⚙️ 連携設定
         </button>
         <button class="btn btn-secondary" onclick="openStatsModal()">
@@ -144,7 +157,7 @@
   <div class="toast" id="toast"></div>
 
   <!-- Stats Input Modal (フォロワー・売上入力) -->
-  <div class="modal-overlay" id="stats-modal">
+  <div id="stats-modal" class="modal-overlay">
     <div class="modal">
       <div class="modal-header">
         <h3 class="modal-title">フォロワー・売上入力</h3>
@@ -172,7 +185,7 @@
   </div>
 
   <!-- Export Modal -->
-  <div class="modal-overlay" id="export-modal">
+  <div id="export-modal" class="modal-overlay">
     <div class="modal">
       <div class="modal-header">
         <h3 class="modal-title">CSVエクスポート</h3>
@@ -203,11 +216,11 @@
   </div>
 
   <!-- Note Settings Modal -->
-  <div class="modal-overlay" id="note-settings-modal">
+  <div id="note-settings-modal" class="modal-overlay">
     <div class="modal">
       <div class="modal-header">
         <h3 class="modal-title">note連携設定</h3>
-        <button class="modal-close" onclick="closeNoteSettings()">×</button>
+        <button class="modal-close" onclick="closeNoteSettingsModal()">×</button>
       </div>
       <div class="modal-body">
         <div class="form-group">
@@ -232,21 +245,10 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeNoteSettings()">キャンセル</button>
+        <button class="btn btn-secondary" onclick="closeNoteSettingsModal()">キャンセル</button>
         <button class="btn btn-primary" onclick="saveNoteSettings()">保存</button>
       </div>
     </div>
   </div>
-
-  <!-- Scripts -->
-  <script src="js/config.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/ui.js"></script>
-  <script src="js/charts.js"></script>
-  <script src="js/note-settings.js"></script>
-  <script src="js/note-sync.js"></script>
-  <script src="js/analytics.js"></script>
-  <script src="js/csv-export.js"></script>
-  <script src="js/main.js"></script>
 </body>
 </html>

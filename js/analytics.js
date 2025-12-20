@@ -14,22 +14,37 @@ async function initAnalytics() {
   updateArticleStatsTable();
 }
 
-// データ読み込み（Supabaseから）
+// データ読み込み（Supabase + ローカルキャッシュ）
 async function loadAnalyticsData() {
   try {
-    // 記事別アクセスデータ取得
-    const articlesResponse = await fetchAPI('/api/analytics/articles');
-    if (articlesResponse && articlesResponse.data) {
-      analyticsData = articlesResponse.data;
-    }
-    
-    // 日次統計データ取得（フォロワー・売上）
-    const statsResponse = await fetchAPI('/api/analytics/daily-stats');
-    if (statsResponse && statsResponse.data) {
-      dailyStats = statsResponse.data;
+    // Supabaseクライアントが利用可能か確認
+    if (typeof supabase !== 'undefined' && supabase) {
+      // 記事別アクセスデータ取得
+      const { data: articles, error: articlesError } = await supabase
+        .from('note_articles')
+        .select('*')
+        .order('read_count', { ascending: false });
+      
+      if (!articlesError && articles) {
+        analyticsData = articles;
+        localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
+      }
+      
+      // 日次統計データ取得（フォロワー・売上）
+      const { data: stats, error: statsError } = await supabase
+        .from('daily_stats')
+        .select('*')
+        .order('date', { ascending: false });
+      
+      if (!statsError && stats) {
+        dailyStats = stats;
+        localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
+      }
+    } else {
+      throw new Error('Supabase not initialized');
     }
   } catch (error) {
-    console.error('データ読み込みエラー:', error);
+    console.warn('Supabaseからの読み込みをスキップ、キャッシュを使用:', error.message);
     // ローカルストレージからフォールバック
     const storedArticles = localStorage.getItem('note_analytics_cache');
     if (storedArticles) {
@@ -40,10 +55,6 @@ async function loadAnalyticsData() {
       dailyStats = JSON.parse(storedStats);
     }
   }
-  
-  // キャッシュ更新
-  localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
-  localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
 }
 
 // KPIカード更新
@@ -76,11 +87,17 @@ function updateKPICards() {
     }
   }
   
-  document.getElementById('total-pv').textContent = totalPV.toLocaleString();
-  document.getElementById('total-likes').textContent = totalLikes.toLocaleString();
-  document.getElementById('total-comments').textContent = totalComments.toLocaleString();
-  document.getElementById('total-followers').textContent = latestFollowers;
-  document.getElementById('total-revenue').textContent = latestRevenue;
+  const pvEl = document.getElementById('total-pv');
+  const likesEl = document.getElementById('total-likes');
+  const commentsEl = document.getElementById('total-comments');
+  const followersEl = document.getElementById('total-followers');
+  const revenueEl = document.getElementById('total-revenue');
+  
+  if (pvEl) pvEl.textContent = totalPV.toLocaleString();
+  if (likesEl) likesEl.textContent = totalLikes.toLocaleString();
+  if (commentsEl) commentsEl.textContent = totalComments.toLocaleString();
+  if (followersEl) followersEl.textContent = latestFollowers;
+  if (revenueEl) revenueEl.textContent = latestRevenue;
 }
 
 // チャート更新
@@ -167,6 +184,16 @@ function prepareChartData(period) {
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
+  
+  // データがない場合のフォールバック
+  if (sortedKeys.length === 0) {
+    const today = new Date().toISOString().split('T')[0];
+    return {
+      labels: [today],
+      pv: [0],
+      likes: [0]
+    };
+  }
   
   return {
     labels: sortedKeys.map(k => formatChartLabel(k, period)),
@@ -297,16 +324,8 @@ function getTrendIcon(trend, value) {
   }
 }
 
-// HTMLエスケープ
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
 // 期間比較
-async function comparePeriods() {
+function comparePeriods() {
   const p1Start = document.getElementById('period1-start').value;
   const p1End = document.getElementById('period1-end').value;
   const p2Start = document.getElementById('period2-start').value;
@@ -440,14 +459,17 @@ async function saveStats() {
     };
     
     // Supabaseに保存
-    await fetchAPI('/api/analytics/daily-stats', {
-      method: 'POST',
-      body: JSON.stringify(data)
-    });
+    if (typeof supabase !== 'undefined' && supabase) {
+      const { error } = await supabase
+        .from('daily_stats')
+        .upsert(data, { onConflict: 'date' });
+      
+      if (error) throw error;
+    }
     
     // ローカルキャッシュも更新
     const existingIndex = dailyStats.findIndex(s => 
-      (s.date || s.recorded_at).split('T')[0] === date
+      (s.date || s.recorded_at || '').split('T')[0] === date
     );
     
     if (existingIndex >= 0) {

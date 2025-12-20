@@ -11,6 +11,9 @@ async function initApp() {
   console.log('note アクセス解析ツール 初期化開始');
   
   try {
+    // Supabase初期化
+    initSupabase();
+    
     // note設定の読み込み
     loadNoteSettings();
     
@@ -27,6 +30,16 @@ async function initApp() {
   } catch (error) {
     console.error('初期化エラー:', error);
     showToast('初期化に失敗しました');
+  }
+}
+
+// Supabase初期化
+function initSupabase() {
+  if (typeof window.supabase === 'undefined' && typeof supabaseJs !== 'undefined') {
+    window.supabase = supabaseJs.createClient(
+      CONFIG.SUPABASE_URL,
+      CONFIG.SUPABASE_ANON_KEY
+    );
   }
 }
 
@@ -64,7 +77,7 @@ async function syncFromNote() {
   
   if (!authToken || !session) {
     showToast('先にnote連携設定で認証情報を設定してください');
-    openNoteSettings();
+    openNoteSettingsModal();
     return;
   }
   
@@ -77,7 +90,13 @@ async function syncFromNote() {
   showToast('noteからデータを取得中...');
   
   try {
-    await fetchNoteStats();
+    // note-sync.jsのsyncNoteData関数を呼び出し
+    if (typeof syncNoteData === 'function') {
+      await syncNoteData();
+    } else {
+      throw new Error('syncNoteData関数が見つかりません');
+    }
+    
     localStorage.setItem('note_last_sync', new Date().toISOString());
     updateLastSyncTime();
     await initAnalytics(); // データ再読み込み

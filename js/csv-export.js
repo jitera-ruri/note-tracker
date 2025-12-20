@@ -11,22 +11,34 @@ function openExportModal() {
   const thirtyDaysAgo = new Date(today);
   thirtyDaysAgo.setDate(today.getDate() - 30);
   
-  document.getElementById('export-start').value = thirtyDaysAgo.toISOString().split('T')[0];
-  document.getElementById('export-end').value = today.toISOString().split('T')[0];
+  const startInput = document.getElementById('export-start');
+  const endInput = document.getElementById('export-end');
   
-  modal.classList.add('active');
+  if (startInput) startInput.value = thirtyDaysAgo.toISOString().split('T')[0];
+  if (endInput) endInput.value = today.toISOString().split('T')[0];
+  
+  if (modal) {
+    modal.classList.add('active');
+  }
 }
 
 // エクスポートモーダルを閉じる
 function closeExportModal() {
-  document.getElementById('export-modal').classList.remove('active');
+  const modal = document.getElementById('export-modal');
+  if (modal) {
+    modal.classList.remove('active');
+  }
 }
 
 // エクスポート実行
 function executeExport() {
-  const exportType = document.getElementById('export-type').value;
-  const startDate = document.getElementById('export-start').value;
-  const endDate = document.getElementById('export-end').value;
+  const exportTypeSelect = document.getElementById('export-type');
+  const startInput = document.getElementById('export-start');
+  const endInput = document.getElementById('export-end');
+  
+  const exportType = exportTypeSelect ? exportTypeSelect.value : 'detail';
+  const startDate = startInput ? startInput.value : '';
+  const endDate = endInput ? endInput.value : '';
   
   let csvContent = '';
   
@@ -61,7 +73,9 @@ function executeExport() {
 // 詳細データCSV生成
 function generateDetailCSV(startDate, endDate) {
   // analyticsDataはグローバル変数（analytics.jsで定義）
-  if (!analyticsData || analyticsData.length === 0) return '';
+  if (typeof analyticsData === 'undefined' || !analyticsData || analyticsData.length === 0) {
+    return '';
+  }
   
   const rows = [];
   rows.push(['日付', '記事タイトル', 'PV', 'スキ', 'コメント'].join(','));
@@ -88,7 +102,7 @@ function generateDetailCSV(startDate, endDate) {
     }
     
     history.forEach(stat => {
-      const dateStr = stat.date || stat.recorded_at;
+      const dateStr = stat.date || stat.recorded_at || '';
       const date = new Date(dateStr);
       
       // 期間フィルタ
@@ -110,14 +124,12 @@ function generateDetailCSV(startDate, endDate) {
 
 // サマリーCSV生成
 function generateSummaryCSV(startDate, endDate) {
-  if (!analyticsData || analyticsData.length === 0) return '';
+  if (typeof analyticsData === 'undefined' || !analyticsData || analyticsData.length === 0) {
+    return '';
+  }
   
   const rows = [];
   rows.push(['記事タイトル', '累計PV', '累計スキ', '累計コメント', 'URL'].join(','));
-  
-  const start = startDate ? new Date(startDate) : null;
-  const end = endDate ? new Date(endDate) : null;
-  if (end) end.setHours(23, 59, 59, 999);
   
   analyticsData.forEach(article => {
     const title = article.title || article.name || '無題';

@@ -19,20 +19,29 @@ function loadNoteSettings() {
 }
 
 // 設定モーダルを開く
-function openNoteSettings() {
+function openNoteSettingsModal() {
   loadNoteSettings();
-  document.getElementById('note-settings-modal').classList.add('active');
+  const modal = document.getElementById('note-settings-modal');
+  if (modal) {
+    modal.classList.add('active');
+  }
 }
 
 // 設定モーダルを閉じる
-function closeNoteSettings() {
-  document.getElementById('note-settings-modal').classList.remove('active');
+function closeNoteSettingsModal() {
+  const modal = document.getElementById('note-settings-modal');
+  if (modal) {
+    modal.classList.remove('active');
+  }
 }
 
 // 設定保存
 async function saveNoteSettings() {
-  const authToken = document.getElementById('note-auth-token').value.trim();
-  const session = document.getElementById('note-session').value.trim();
+  const authTokenInput = document.getElementById('note-auth-token');
+  const sessionInput = document.getElementById('note-session');
+  
+  const authToken = authTokenInput ? authTokenInput.value.trim() : '';
+  const session = sessionInput ? sessionInput.value.trim() : '';
   
   if (!authToken || !session) {
     showToast('認証トークンとセッションの両方を入力してください');
@@ -43,19 +52,6 @@ async function saveNoteSettings() {
   localStorage.setItem('note_auth_token', authToken);
   localStorage.setItem('note_session', session);
   
-  // Supabaseにも保存（APIがあれば）
-  try {
-    await fetchAPI('/api/settings/note-credentials', {
-      method: 'POST',
-      body: JSON.stringify({
-        auth_token: authToken,
-        session: session
-      })
-    });
-  } catch (error) {
-    console.warn('サーバーへの設定保存をスキップ:', error);
-  }
-  
-  closeNoteSettings();
+  closeNoteSettingsModal();
   showToast('設定を保存しました');
 }
