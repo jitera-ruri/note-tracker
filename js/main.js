@@ -35,11 +35,19 @@ async function initApp() {
 
 // Supabase初期化
 function initSupabase() {
-  if (typeof window.supabase === 'undefined' && typeof supabaseJs !== 'undefined') {
-    window.supabase = supabaseJs.createClient(
-      CONFIG.SUPABASE_URL,
-      CONFIG.SUPABASE_ANON_KEY
-    );
+  if (typeof window.supabase === 'undefined') {
+    if (typeof supabaseJs !== 'undefined') {
+      window.supabase = supabaseJs.createClient(
+        CONFIG.SUPABASE_URL,
+        CONFIG.SUPABASE_ANON_KEY
+      );
+    } else if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
+      // CDN版の場合
+      window.supabase = supabase.createClient(
+        CONFIG.SUPABASE_URL,
+        CONFIG.SUPABASE_ANON_KEY
+      );
+    }
   }
 }
 
@@ -90,11 +98,12 @@ async function syncFromNote() {
   showToast('noteからデータを取得中...');
   
   try {
-    // note-sync.jsのsyncNoteData関数を呼び出し
-    if (typeof syncNoteData === 'function') {
-      await syncNoteData();
+    // note-sync.jsのsyncNoteStats関数を呼び出し
+    if (typeof syncNoteStats === 'function') {
+      await syncNoteStats();
     } else {
-      throw new Error('syncNoteData関数が見つかりません');
+      // フォールバック: 直接API呼び出し
+      await fetchNoteStatsDirectly();
     }
     
     localStorage.setItem('note_last_sync', new Date().toISOString());
@@ -110,4 +119,28 @@ async function syncFromNote() {
       btn.innerHTML = '🔄 noteから自動取得';
     }
   }
+}
+
+// 直接API呼び出し（フォールバック用）
+async function fetchNoteStatsDirectly() {
+  const authToken = localStorage.getItem('note_auth_token');
+  const session = localStorage.getItem('note_session');
+  
+  const response = await fetch('/api/sync-note', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      note_gql_auth_token: authToken,
+      _note_session_v5: session
+    })
+  });
+  
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error || `API Error: ${response.status}`);
+  }
+  
+  return await response.json();
 }
