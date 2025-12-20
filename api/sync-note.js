@@ -20,23 +20,17 @@ export default async function handler(req, res) {
 
   console.log('=== SYNC START ===');
   
-  // デバッグ: 受け取ったデータを確認
-  console.log('req.body type:', typeof req.body);
-  console.log('req.body:', JSON.stringify(req.body, null, 2));
-  
   // bodyが文字列の場合はパース
   let body = req.body;
   if (typeof req.body === 'string') {
     try {
       body = JSON.parse(req.body);
-      console.log('Parsed body:', JSON.stringify(body, null, 2));
     } catch (e) {
       console.error('Body parse error:', e);
     }
   }
 
   const cookies = body?.cookies;
-  console.log('cookies:', JSON.stringify(cookies, null, 2));
 
   if (!cookies || !cookies.note_gql_auth_token || !cookies._note_session_v5) {
     console.log('Missing cookies - returning 400');
@@ -44,8 +38,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // noteのダッシュボードAPIを呼び出し
-    const noteResponse = await fetch('https://note.com/api/v1/stats/pv_comments_likes', {
+    // noteのダッシュボードAPIを呼び出し（新しいエンドポイント）
+    const noteResponse = await fetch('https://note.com/api/v1/stats/pv?filter=all&page=1&sort=pv', {
       headers: {
         'Cookie': `note_gql_auth_token=${cookies.note_gql_auth_token}; _note_session_v5=${cookies._note_session_v5}`,
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -66,20 +60,34 @@ export default async function handler(req, res) {
     }
 
     const noteData = await noteResponse.json();
-    console.log('note API response articles count:', noteData?.data?.note_stats?.length || 0);
+    console.log('note API response:', JSON.stringify(noteData).substring(0, 500));
 
-    // データをSupabaseに保存
-    const articles = noteData?.data?.note_stats || [];
+    // データ構造を確認してパース
+    const articles = noteData?.data?.contents || noteData?.data?.note_stats || noteData?.contents || [];
+    console.log('Articles count:', articles.length);
+
     const today = new Date().toISOString().split('T')[0];
 
     for (const article of articles) {
+      // 記事IDとURLを取得（データ構造に応じて調整）
+      const articleId = article.key || article.id || article.note_id;
+      const articleTitle = article.name || article.title;
+      const articleUrl = article.note_url 
+        ? `https://note.com${article.note_url}` 
+        : (article.url || '');
+
+      if (!articleId) {
+        console.log('Skipping article without ID:', article);
+        continue;
+      }
+
       // articlesテーブルにupsert
       const { error: articleError } = await supabase
         .from('articles')
         .upsert({
-          id: article.key,
-          title: article.name,
-          url: `https://note.com${article.note_url}`,
+          id: articleId,
+          title: articleTitle,
+          url: articleUrl,
           updated_at: new Date().toISOString()
         }, { onConflict: 'id' });
 
@@ -91,11 +99,11 @@ export default async function handler(req, res) {
       const { error: analyticsError } = await supabase
         .from('article_analytics')
         .upsert({
-          article_id: article.key,
+          article_id: articleId,
           date: today,
-          pv: article.read_count || 0,
-          likes: article.like_count || 0,
-          comments: article.comment_count || 0
+          pv: article.read_count || article.pv || 0,
+          likes: article.like_count || article.likes || 0,
+          comments: article.comment_count || article.comments || 0
         }, { onConflict: 'article_id,date' });
 
       if (analyticsError) {
