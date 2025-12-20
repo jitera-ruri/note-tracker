@@ -60,87 +60,82 @@ function executeExport() {
 
 // 詳細データCSV生成
 function generateDetailCSV(startDate, endDate) {
-  const stored = localStorage.getItem('note_analytics_data');
-  const analyticsData = stored ? JSON.parse(stored) : [];
-  
-  if (analyticsData.length === 0) return '';
+  // analyticsDataはグローバル変数（analytics.jsで定義）
+  if (!analyticsData || analyticsData.length === 0) return '';
   
   const rows = [];
   rows.push(['日付', '記事タイトル', 'PV', 'スキ', 'コメント'].join(','));
   
   const start = startDate ? new Date(startDate) : null;
   const end = endDate ? new Date(endDate) : null;
+  if (end) end.setHours(23, 59, 59, 999);
   
   analyticsData.forEach(article => {
-    if (!article.stats) return;
+    const history = article.stats_history || article.history || [];
+    const title = article.title || article.name || '無題';
     
-    article.stats.forEach(stat => {
-      const date = new Date(stat.date);
+    if (history.length === 0) {
+      // 履歴がない場合は現在の値を出力
+      const today = new Date().toISOString().split('T')[0];
+      rows.push([
+        today,
+        `"${title.replace(/"/g, '""')}"`,
+        article.read_count || article.pv || 0,
+        article.like_count || article.likes || 0,
+        article.comment_count || article.comments || 0
+      ].join(','));
+      return;
+    }
+    
+    history.forEach(stat => {
+      const dateStr = stat.date || stat.recorded_at;
+      const date = new Date(dateStr);
       
       // 期間フィルタ
       if (start && date < start) return;
       if (end && date > end) return;
       
       rows.push([
-        stat.date,
-        `"${(article.title || '').replace(/"/g, '""')}"`,
-        stat.pv || 0,
-        stat.likes || 0,
-        stat.comments || 0
+        dateStr.split('T')[0],
+        `"${title.replace(/"/g, '""')}"`,
+        stat.pv || stat.read_count || 0,
+        stat.likes || stat.like_count || 0,
+        stat.comments || stat.comment_count || 0
       ].join(','));
     });
   });
   
-  return rows.join('\n');
+  return rows.length > 1 ? rows.join('\n') : '';
 }
 
 // サマリーCSV生成
 function generateSummaryCSV(startDate, endDate) {
-  const stored = localStorage.getItem('note_analytics_data');
-  const analyticsData = stored ? JSON.parse(stored) : [];
-  
-  if (analyticsData.length === 0) return '';
+  if (!analyticsData || analyticsData.length === 0) return '';
   
   const rows = [];
-  rows.push(['記事タイトル', '累計PV', '累計スキ', '累計コメント', '最終更新日'].join(','));
+  rows.push(['記事タイトル', '累計PV', '累計スキ', '累計コメント', 'URL'].join(','));
   
   const start = startDate ? new Date(startDate) : null;
   const end = endDate ? new Date(endDate) : null;
+  if (end) end.setHours(23, 59, 59, 999);
   
   analyticsData.forEach(article => {
-    if (!article.stats || article.stats.length === 0) return;
+    const title = article.title || article.name || '無題';
+    const url = article.url || article.note_url || '';
     
-    let totalPV = 0;
-    let totalLikes = 0;
-    let totalComments = 0;
-    let lastDate = '';
+    // 現在の累計値を使用
+    const totalPV = article.read_count || article.pv || 0;
+    const totalLikes = article.like_count || article.likes || 0;
+    const totalComments = article.comment_count || article.comments || 0;
     
-    article.stats.forEach(stat => {
-      const date = new Date(stat.date);
-      
-      // 期間フィルタ
-      if (start && date < start) return;
-      if (end && date > end) return;
-      
-      totalPV += stat.pv || 0;
-      totalLikes += stat.likes || 0;
-      totalComments += stat.comments || 0;
-      
-      if (!lastDate || stat.date > lastDate) {
-        lastDate = stat.date;
-      }
-    });
-    
-    if (lastDate) {
-      rows.push([
-        `"${(article.title || '').replace(/"/g, '""')}"`,
-        totalPV,
-        totalLikes,
-        totalComments,
-        lastDate
-      ].join(','));
-    }
+    rows.push([
+      `"${title.replace(/"/g, '""')}"`,
+      totalPV,
+      totalLikes,
+      totalComments,
+      `"${url}"`
+    ].join(','));
   });
   
-  return rows.join('\n');
+  return rows.length > 1 ? rows.join('\n') : '';
 }

@@ -7,42 +7,56 @@ let analyticsData = [];
 let dailyStats = [];
 
 // アナリティクス初期化
-function initAnalytics() {
-  loadAnalyticsData();
+async function initAnalytics() {
+  await loadAnalyticsData();
   updateKPICards();
   updateChart('daily');
   updateArticleStatsTable();
 }
 
-// データ読み込み
-function loadAnalyticsData() {
-  const stored = localStorage.getItem('note_analytics_data');
-  analyticsData = stored ? JSON.parse(stored) : [];
+// データ読み込み（Supabaseから）
+async function loadAnalyticsData() {
+  try {
+    // 記事別アクセスデータ取得
+    const articlesResponse = await fetchAPI('/api/analytics/articles');
+    if (articlesResponse && articlesResponse.data) {
+      analyticsData = articlesResponse.data;
+    }
+    
+    // 日次統計データ取得（フォロワー・売上）
+    const statsResponse = await fetchAPI('/api/analytics/daily-stats');
+    if (statsResponse && statsResponse.data) {
+      dailyStats = statsResponse.data;
+    }
+  } catch (error) {
+    console.error('データ読み込みエラー:', error);
+    // ローカルストレージからフォールバック
+    const storedArticles = localStorage.getItem('note_analytics_cache');
+    if (storedArticles) {
+      analyticsData = JSON.parse(storedArticles);
+    }
+    const storedStats = localStorage.getItem('note_daily_stats_cache');
+    if (storedStats) {
+      dailyStats = JSON.parse(storedStats);
+    }
+  }
   
-  const storedStats = localStorage.getItem('note_daily_stats');
-  dailyStats = storedStats ? JSON.parse(storedStats) : [];
-}
-
-// データ保存
-function saveAnalyticsData() {
-  localStorage.setItem('note_analytics_data', JSON.stringify(analyticsData));
-  localStorage.setItem('note_daily_stats', JSON.stringify(dailyStats));
+  // キャッシュ更新
+  localStorage.setItem('note_analytics_cache', JSON.stringify(analyticsData));
+  localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
 }
 
 // KPIカード更新
 function updateKPICards() {
-  // 記事データの集計
   let totalPV = 0;
   let totalLikes = 0;
   let totalComments = 0;
   
+  // 記事データの集計（最新の値を使用）
   analyticsData.forEach(article => {
-    if (article.stats && article.stats.length > 0) {
-      const latest = article.stats[article.stats.length - 1];
-      totalPV += latest.pv || 0;
-      totalLikes += latest.likes || 0;
-      totalComments += latest.comments || 0;
-    }
+    totalPV += article.read_count || article.pv || 0;
+    totalLikes += article.like_count || article.likes || 0;
+    totalComments += article.comment_count || article.comments || 0;
   });
   
   // フォロワー・売上の最新値
@@ -51,14 +65,14 @@ function updateKPICards() {
   
   if (dailyStats.length > 0) {
     const sortedStats = [...dailyStats].sort((a, b) => 
-      new Date(b.date) - new Date(a.date)
+      new Date(b.date || b.recorded_at) - new Date(a.date || a.recorded_at)
     );
     const latest = sortedStats[0];
     if (latest.followers !== undefined && latest.followers !== null) {
-      latestFollowers = latest.followers.toLocaleString();
+      latestFollowers = Number(latest.followers).toLocaleString();
     }
     if (latest.revenue !== undefined && latest.revenue !== null) {
-      latestRevenue = '¥' + latest.revenue.toLocaleString();
+      latestRevenue = '¥' + Number(latest.revenue).toLocaleString();
     }
   }
   
@@ -126,97 +140,124 @@ function prepareChartData(period) {
   const aggregated = {};
   
   analyticsData.forEach(article => {
-    if (!article.stats) return;
+    const history = article.stats_history || article.history || [];
     
-    article.stats.forEach(stat => {
-      const date = new Date(stat.date);
-      let key;
-      
-      switch (period) {
-        case 'weekly':
-          const weekStart = new Date(date);
-          weekStart.setDate(date.getDate() - date.getDay());
-          key = weekStart.toISOString().split('T')[0];
-          break;
-        case 'monthly':
-          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-          break;
-        default: // daily
-          key = stat.date;
+    if (history.length === 0) {
+      // 履歴がない場合は現在の値を使用
+      const today = new Date().toISOString().split('T')[0];
+      const key = getAggregationKey(today, period);
+      if (!aggregated[key]) {
+        aggregated[key] = { pv: 0, likes: 0 };
       }
+      aggregated[key].pv += article.read_count || article.pv || 0;
+      aggregated[key].likes += article.like_count || article.likes || 0;
+      return;
+    }
+    
+    history.forEach(stat => {
+      const dateStr = stat.date || stat.recorded_at;
+      const key = getAggregationKey(dateStr, period);
       
       if (!aggregated[key]) {
         aggregated[key] = { pv: 0, likes: 0 };
       }
-      aggregated[key].pv += stat.pv || 0;
-      aggregated[key].likes += stat.likes || 0;
+      aggregated[key].pv += stat.pv || stat.read_count || 0;
+      aggregated[key].likes += stat.likes || stat.like_count || 0;
     });
   });
   
   const sortedKeys = Object.keys(aggregated).sort();
   
   return {
-    labels: sortedKeys,
+    labels: sortedKeys.map(k => formatChartLabel(k, period)),
     pv: sortedKeys.map(k => aggregated[k].pv),
     likes: sortedKeys.map(k => aggregated[k].likes)
   };
+}
+
+// 集計キー取得
+function getAggregationKey(dateStr, period) {
+  const date = new Date(dateStr);
+  
+  switch (period) {
+    case 'weekly':
+      const weekStart = new Date(date);
+      weekStart.setDate(date.getDate() - date.getDay());
+      return weekStart.toISOString().split('T')[0];
+    case 'monthly':
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    default: // daily
+      return dateStr.split('T')[0];
+  }
+}
+
+// チャートラベルフォーマット
+function formatChartLabel(key, period) {
+  if (period === 'monthly') {
+    const [year, month] = key.split('-');
+    return `${year}/${month}`;
+  }
+  const date = new Date(key);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 // 記事別アクセステーブル更新
 function updateArticleStatsTable() {
   const tbody = document.getElementById('article-stats-body');
   const emptyState = document.getElementById('article-empty-state');
+  const table = document.getElementById('article-stats-table');
   
   if (!analyticsData || analyticsData.length === 0) {
-    tbody.innerHTML = '';
-    emptyState.style.display = 'block';
+    if (tbody) tbody.innerHTML = '';
+    if (emptyState) emptyState.style.display = 'block';
+    if (table) table.style.display = 'none';
     return;
   }
   
-  emptyState.style.display = 'none';
+  if (emptyState) emptyState.style.display = 'none';
+  if (table) table.style.display = 'table';
   
   // 記事ごとの最新データと前日比を計算
   const articleStats = analyticsData.map(article => {
-    const stats = article.stats || [];
-    if (stats.length === 0) {
-      return {
-        title: article.title,
-        pv: 0,
-        likes: 0,
-        comments: 0,
-        trend: 'flat',
-        trendValue: 0
-      };
-    }
+    const history = article.stats_history || article.history || [];
     
-    // 日付でソート
-    const sortedStats = [...stats].sort((a, b) => 
-      new Date(a.date) - new Date(b.date)
-    );
+    const currentPV = article.read_count || article.pv || 0;
+    const currentLikes = article.like_count || article.likes || 0;
+    const currentComments = article.comment_count || article.comments || 0;
     
-    const latest = sortedStats[sortedStats.length - 1];
-    const previous = sortedStats.length > 1 ? sortedStats[sortedStats.length - 2] : null;
-    
-    // 前日比計算（PVベース）
+    // 前日比計算
     let trend = 'flat';
     let trendValue = 0;
     
-    if (previous && previous.pv > 0) {
-      const diff = (latest.pv || 0) - (previous.pv || 0);
-      trendValue = Math.round((diff / previous.pv) * 100);
+    if (history.length >= 2) {
+      const sortedHistory = [...history].sort((a, b) => 
+        new Date(a.date || a.recorded_at) - new Date(b.date || b.recorded_at)
+      );
       
-      if (trendValue > 5) {
-        trend = 'up';
-      } else if (trendValue < -5) {
-        trend = 'down';
+      const latest = sortedHistory[sortedHistory.length - 1];
+      const previous = sortedHistory[sortedHistory.length - 2];
+      
+      const latestPV = latest.pv || latest.read_count || 0;
+      const previousPV = previous.pv || previous.read_count || 0;
+      
+      if (previousPV > 0) {
+        const diff = latestPV - previousPV;
+        trendValue = Math.round((diff / previousPV) * 100);
+        
+        if (trendValue > 5) {
+          trend = 'up';
+        } else if (trendValue < -5) {
+          trend = 'down';
+        }
       }
     }
     
     return {
-      title: article.title,
-      pv: latest.pv || 0,
-      likes: latest.likes || 0,
-      comments: latest.comments || 0,
+      title: article.title || article.name || '無題',
+      url: article.url || article.note_url || '#',
+      pv: currentPV,
+      likes: currentLikes,
+      comments: currentComments,
       trend,
       trendValue
     };
@@ -228,9 +269,13 @@ function updateArticleStatsTable() {
   // テーブル生成
   tbody.innerHTML = articleStats.map(article => {
     const trendIcon = getTrendIcon(article.trend, article.trendValue);
+    const titleHtml = article.url !== '#' 
+      ? `<a href="${escapeHtml(article.url)}" target="_blank" rel="noopener">${escapeHtml(article.title)}</a>`
+      : escapeHtml(article.title);
+    
     return `
       <tr>
-        <td class="article-name" title="${escapeHtml(article.title)}">${escapeHtml(article.title)}</td>
+        <td class="article-name" title="${escapeHtml(article.title)}">${titleHtml}</td>
         <td>${article.pv.toLocaleString()}</td>
         <td>${article.likes.toLocaleString()}</td>
         <td>${article.comments.toLocaleString()}</td>
@@ -254,13 +299,14 @@ function getTrendIcon(trend, value) {
 
 // HTMLエスケープ
 function escapeHtml(text) {
+  if (!text) return '';
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
 }
 
 // 期間比較
-function comparePeriods() {
+async function comparePeriods() {
   const p1Start = document.getElementById('period1-start').value;
   const p1End = document.getElementById('period1-end').value;
   const p2Start = document.getElementById('period2-start').value;
@@ -288,18 +334,19 @@ function comparePeriods() {
 function aggregateByPeriod(startDate, endDate) {
   const start = new Date(startDate);
   const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
   
   let pv = 0, likes = 0, comments = 0;
   
   analyticsData.forEach(article => {
-    if (!article.stats) return;
+    const history = article.stats_history || article.history || [];
     
-    article.stats.forEach(stat => {
-      const date = new Date(stat.date);
+    history.forEach(stat => {
+      const date = new Date(stat.date || stat.recorded_at);
       if (date >= start && date <= end) {
-        pv += stat.pv || 0;
-        likes += stat.likes || 0;
-        comments += stat.comments || 0;
+        pv += stat.pv || stat.read_count || 0;
+        likes += stat.likes || stat.like_count || 0;
+        comments += stat.comments || stat.comment_count || 0;
       }
     });
   });
@@ -349,14 +396,17 @@ function openStatsModal() {
   // 直近のデータがあればプレースホルダーに表示
   if (dailyStats.length > 0) {
     const sortedStats = [...dailyStats].sort((a, b) => 
-      new Date(b.date) - new Date(a.date)
+      new Date(b.date || b.recorded_at) - new Date(a.date || a.recorded_at)
     );
     const latest = sortedStats[0];
+    const followersInput = document.getElementById('stats-followers');
+    const revenueInput = document.getElementById('stats-revenue');
+    
     if (latest.followers) {
-      document.getElementById('stats-followers').placeholder = `前回: ${latest.followers}`;
+      followersInput.placeholder = `前回: ${Number(latest.followers).toLocaleString()}`;
     }
     if (latest.revenue) {
-      document.getElementById('stats-revenue').placeholder = `前回: ¥${latest.revenue}`;
+      revenueInput.placeholder = `前回: ¥${Number(latest.revenue).toLocaleString()}`;
     }
   }
   
@@ -367,7 +417,7 @@ function closeStatsModal() {
   document.getElementById('stats-modal').classList.remove('active');
 }
 
-function saveStats() {
+async function saveStats() {
   const date = document.getElementById('stats-date').value;
   const followers = document.getElementById('stats-followers').value;
   const revenue = document.getElementById('stats-revenue').value;
@@ -382,28 +432,38 @@ function saveStats() {
     return;
   }
   
-  // 既存データの更新または新規追加
-  const existingIndex = dailyStats.findIndex(s => s.date === date);
-  const newStat = {
-    date,
-    followers: followers ? parseInt(followers, 10) : null,
-    revenue: revenue ? parseInt(revenue, 10) : null
-  };
-  
-  if (existingIndex >= 0) {
-    // 既存データがあれば、入力された値のみ更新
-    if (newStat.followers !== null) {
-      dailyStats[existingIndex].followers = newStat.followers;
+  try {
+    const data = {
+      date: date,
+      followers: followers ? parseInt(followers, 10) : null,
+      revenue: revenue ? parseInt(revenue, 10) : null
+    };
+    
+    // Supabaseに保存
+    await fetchAPI('/api/analytics/daily-stats', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    
+    // ローカルキャッシュも更新
+    const existingIndex = dailyStats.findIndex(s => 
+      (s.date || s.recorded_at).split('T')[0] === date
+    );
+    
+    if (existingIndex >= 0) {
+      if (data.followers !== null) dailyStats[existingIndex].followers = data.followers;
+      if (data.revenue !== null) dailyStats[existingIndex].revenue = data.revenue;
+    } else {
+      dailyStats.push(data);
     }
-    if (newStat.revenue !== null) {
-      dailyStats[existingIndex].revenue = newStat.revenue;
-    }
-  } else {
-    dailyStats.push(newStat);
+    
+    localStorage.setItem('note_daily_stats_cache', JSON.stringify(dailyStats));
+    
+    updateKPICards();
+    closeStatsModal();
+    showToast('保存しました');
+  } catch (error) {
+    console.error('保存エラー:', error);
+    showToast('保存に失敗しました: ' + error.message);
   }
-  
-  saveAnalyticsData();
-  updateKPICards();
-  closeStatsModal();
-  showToast('保存しました');
 }

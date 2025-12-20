@@ -10,19 +10,24 @@ document.addEventListener('DOMContentLoaded', () => {
 async function initApp() {
   console.log('note アクセス解析ツール 初期化開始');
   
-  // note設定の読み込み
-  loadNoteSettings();
-  
-  // アナリティクスの初期化
-  initAnalytics();
-  
-  // チャート期間タブのイベント設定
-  initChartPeriodTabs();
-  
-  // 最終同期時刻の表示
-  updateLastSyncTime();
-  
-  console.log('初期化完了');
+  try {
+    // note設定の読み込み
+    loadNoteSettings();
+    
+    // アナリティクスの初期化（データ取得含む）
+    await initAnalytics();
+    
+    // チャート期間タブのイベント設定
+    initChartPeriodTabs();
+    
+    // 最終同期時刻の表示
+    updateLastSyncTime();
+    
+    console.log('初期化完了');
+  } catch (error) {
+    console.error('初期化エラー:', error);
+    showToast('初期化に失敗しました');
+  }
 }
 
 // チャート期間タブの初期化
@@ -42,33 +47,48 @@ function initChartPeriodTabs() {
 function updateLastSyncTime() {
   const lastSync = localStorage.getItem('note_last_sync');
   const element = document.getElementById('last-sync-time');
-  if (lastSync) {
-    const date = new Date(lastSync);
-    element.textContent = `最終同期: ${date.toLocaleString('ja-JP')}`;
-  } else {
-    element.textContent = '最終同期: -';
+  if (element) {
+    if (lastSync) {
+      const date = new Date(lastSync);
+      element.textContent = `最終同期: ${date.toLocaleString('ja-JP')}`;
+    } else {
+      element.textContent = '最終同期: -';
+    }
   }
 }
 
 // noteから同期
 async function syncFromNote() {
-  const username = localStorage.getItem('note_username');
-  if (!username) {
-    showToast('先にnote連携設定でユーザー名を設定してください');
+  const authToken = localStorage.getItem('note_auth_token');
+  const session = localStorage.getItem('note_session');
+  
+  if (!authToken || !session) {
+    showToast('先にnote連携設定で認証情報を設定してください');
     openNoteSettings();
     return;
+  }
+  
+  const btn = document.getElementById('sync-note-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '🔄 同期中...';
   }
   
   showToast('noteからデータを取得中...');
   
   try {
-    await fetchNoteAnalytics(username);
+    await fetchNoteStats();
     localStorage.setItem('note_last_sync', new Date().toISOString());
     updateLastSyncTime();
-    initAnalytics(); // データ再読み込み
+    await initAnalytics(); // データ再読み込み
     showToast('同期が完了しました');
   } catch (error) {
     console.error('同期エラー:', error);
     showToast('同期に失敗しました: ' + error.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '🔄 noteから自動取得';
+    }
   }
 }

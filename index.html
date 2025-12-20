@@ -50,7 +50,7 @@
         <h2 class="card-title">📥 データ取得</h2>
       </div>
       <div class="action-buttons">
-        <button class="btn btn-primary" onclick="syncFromNote()">
+        <button class="btn btn-primary" id="sync-note-btn" onclick="syncFromNote()">
           🔄 noteから自動取得
         </button>
         <button class="btn btn-secondary" onclick="openNoteSettings()">
@@ -72,10 +72,12 @@
     <div class="card">
       <div class="card-header">
         <h2 class="card-title">📈 推移グラフ</h2>
-        <div class="filter-tabs" id="chart-period-tabs">
-          <button class="filter-tab active" data-period="daily">日別</button>
-          <button class="filter-tab" data-period="weekly">週別</button>
-          <button class="filter-tab" data-period="monthly">月別</button>
+        <div class="chart-controls">
+          <div class="filter-tabs" id="chart-period-tabs">
+            <button class="filter-tab active" data-period="daily">日別</button>
+            <button class="filter-tab" data-period="weekly">週別</button>
+            <button class="filter-tab" data-period="monthly">月別</button>
+          </div>
         </div>
       </div>
       <div class="chart-container">
@@ -88,17 +90,23 @@
       <div class="card-header">
         <h2 class="card-title">📊 期間比較</h2>
       </div>
-      <div class="period-selector">
-        <label>期間1:</label>
-        <input type="date" id="period1-start" class="form-input" style="width: auto;">
-        <span>〜</span>
-        <input type="date" id="period1-end" class="form-input" style="width: auto;">
-        <span class="vs-text">vs</span>
-        <label>期間2:</label>
-        <input type="date" id="period2-start" class="form-input" style="width: auto;">
-        <span>〜</span>
-        <input type="date" id="period2-end" class="form-input" style="width: auto;">
-        <button class="btn btn-primary btn-sm" onclick="comparePeriods()">比較</button>
+      <div class="period-comparison">
+        <div class="period-inputs">
+          <div class="period-group">
+            <label>期間1:</label>
+            <input type="date" id="period1-start" class="form-input">
+            <span>〜</span>
+            <input type="date" id="period1-end" class="form-input">
+          </div>
+          <span class="vs-label">vs</span>
+          <div class="period-group">
+            <label>期間2:</label>
+            <input type="date" id="period2-start" class="form-input">
+            <span>〜</span>
+            <input type="date" id="period2-end" class="form-input">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="comparePeriods()">比較</button>
+        </div>
       </div>
       <div id="comparison-result"></div>
     </div>
@@ -135,7 +143,7 @@
   <!-- Toast -->
   <div class="toast" id="toast"></div>
 
-  <!-- Stats Input Modal -->
+  <!-- Stats Input Modal (フォロワー・売上入力) -->
   <div class="modal-overlay" id="stats-modal">
     <div class="modal">
       <div class="modal-header">
@@ -180,13 +188,10 @@
         </div>
         <div class="form-group">
           <label class="form-label">期間（任意）</label>
-          <div class="date-row">
-            <div class="form-group">
-              <input type="date" id="export-start" class="form-input">
-            </div>
-            <div class="form-group">
-              <input type="date" id="export-end" class="form-input">
-            </div>
+          <div class="date-range">
+            <input type="date" id="export-start" class="form-input">
+            <span>〜</span>
+            <input type="date" id="export-end" class="form-input">
           </div>
         </div>
       </div>
@@ -206,13 +211,24 @@
       </div>
       <div class="modal-body">
         <div class="form-group">
-          <label class="form-label">noteユーザー名</label>
-          <input type="text" id="note-username" class="form-input" placeholder="例: your_username">
-          <small style="color: var(--gray-600);">noteのプロフィールURLの末尾部分</small>
+          <label class="form-label">note認証トークン (note_gql_auth_token)</label>
+          <input type="password" id="note-auth-token" class="form-input" placeholder="Cookieから取得">
+          <small class="form-hint">noteにログイン後、開発者ツールのCookieから取得してください</small>
         </div>
         <div class="form-group">
-          <label class="form-label">認証トークン（任意）</label>
-          <input type="password" id="note-token" class="form-input" placeholder="非公開記事取得用">
+          <label class="form-label">noteセッション (_note_session_v5)</label>
+          <input type="password" id="note-session" class="form-input" placeholder="Cookieから取得">
+        </div>
+        <div class="settings-help">
+          <details>
+            <summary>取得方法を見る</summary>
+            <ol>
+              <li>noteにログインする</li>
+              <li>開発者ツール（F12）を開く</li>
+              <li>Application → Cookies → note.com を選択</li>
+              <li>note_gql_auth_token と _note_session_v5 の値をコピー</li>
+            </ol>
+          </details>
         </div>
       </div>
       <div class="modal-footer">
@@ -223,7 +239,10 @@
   </div>
 
   <!-- Scripts -->
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/charts.js"></script>
   <script src="js/note-settings.js"></script>
   <script src="js/note-sync.js"></script>
   <script src="js/analytics.js"></script>
